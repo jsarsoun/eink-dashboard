@@ -35,11 +35,21 @@ async function fetchCalendarEvents(): Promise<CalendarData | null> {
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const TZ = 'America/Los_Angeles';
 
-  const endOfDay = new Date();
-  endOfDay.setHours(23, 59, 59, 999);
+  // Compute UTC timestamps for start/end of today in Pacific time,
+  // regardless of the server's OS timezone.
+  const now    = new Date();
+  // offset = ms difference between UTC and Pacific at this moment (e.g. 7*3600000 for PDT)
+  const offset = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' })).getTime()
+               - new Date(now.toLocaleString('en-US', { timeZone: TZ  })).getTime();
+  // Shift now so Pacific wall-clock reads as UTC, extract date components, then shift back
+  const pacificShifted = new Date(now.getTime() - offset);
+  const startOfDay = new Date(
+    Date.UTC(pacificShifted.getUTCFullYear(), pacificShifted.getUTCMonth(), pacificShifted.getUTCDate())
+    + offset
+  );
+  const endOfDay = new Date(startOfDay.getTime() + 86400000 - 1);
 
   // Resolve calendar IDs by name (primary is always available)
   const calListResponse = await calendar.calendarList.list();
@@ -89,9 +99,10 @@ async function fetchCalendarEvents(): Promise<CalendarData | null> {
     const time = allDay
       ? 'All Day'
       : new Date(event.start!.dateTime!).toLocaleTimeString('en-US', {
-          hour:   'numeric',
-          minute: '2-digit',
-          hour12: true,
+          hour:     'numeric',
+          minute:   '2-digit',
+          hour12:   true,
+          timeZone: TZ,
         });
     return { title: event.summary ?? 'Untitled', time, allDay };
   });
