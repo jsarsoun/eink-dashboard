@@ -16,6 +16,7 @@
 
 #include "secrets.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <SPI.h>
@@ -420,18 +421,50 @@ void setup() {
   digitalWrite(EPD_PWR, HIGH);
 
   // 1. Connect to WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, true);  // clear any stale NVS credentials
+  delay(100);
+
+  Serial.printf("ESP32 MAC: %s\n", WiFi.macAddress().c_str());
+
+  // Scan for networks to verify SSID is visible
+  Serial.println("Scanning for networks...");
+  int n = WiFi.scanNetworks();
+  bool ssidFound = false;
+  for (int i = 0; i < n; i++) {
+    Serial.printf("  [%d] %s (%d dBm)\n", i, WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+    if (WiFi.SSID(i) == WIFI_SSID) ssidFound = true;
+  }
+  Serial.printf("Target SSID '%s' %s\n", WIFI_SSID, ssidFound ? "FOUND" : "NOT FOUND");
+
+  // Set config with PMF disabled before connecting.
+  // WiFi.begin() fires esp_wifi_connect() immediately, so we bypass it and
+  // use esp_wifi directly to avoid the "cannot set config while connecting" error.
+  {
+    wifi_config_t conf = {};
+    strlcpy((char*)conf.sta.ssid,     WIFI_SSID,     sizeof(conf.sta.ssid));
+    strlcpy((char*)conf.sta.password, WIFI_PASSWORD, sizeof(conf.sta.password));
+    conf.sta.threshold.authmode  = WIFI_AUTH_WPA2_PSK;
+    conf.sta.pmf_cfg.capable     = false;
+    conf.sta.pmf_cfg.required    = false;
+    esp_wifi_set_config(WIFI_IF_STA, &conf);
+  }
+  esp_wifi_connect();
+
   Serial.print("Connecting to WiFi");
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(1000);
-    Serial.print(".");
+    Serial.printf(".[%d]", WiFi.status());
     attempts++;
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\nWiFi failed — restarting in 30s");
+    Serial.printf("\nWiFi failed — status %d — sleeping 30s then restart\n", WiFi.status());
     showError("server unreachable");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    digitalWrite(EPD_PWR, LOW);
     delay(30000);
     ESP.restart();
   }
@@ -443,6 +476,7 @@ void setup() {
   Serial.printf("Sleeping for %d minutes.\n", refreshMinutes);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
+  digitalWrite(EPD_PWR, LOW);   // cut power to display board during sleep
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
   esp_sleep_enable_timer_wakeup((uint64_t)refreshMinutes * 60ULL * 1000000ULL);
   esp_deep_sleep_start();
