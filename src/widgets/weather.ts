@@ -95,10 +95,18 @@ async function fetchWeatherData(lat: string, lon: string): Promise<WeatherData> 
   url.searchParams.set('timezone', 'auto');
   url.searchParams.set('forecast_days', '4');
 
-  const response = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
-  if (!response.ok) throw new Error('weather unavailable');
-
-  const json = await response.json() as OpenMeteoResponse;
+  let json: OpenMeteoResponse;
+  try {
+    const response = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error(`weather API ${response.status}`);
+    json = await response.json() as OpenMeteoResponse;
+  } catch (err) {
+    if (cache) {
+      console.warn('Weather fetch failed, serving stale cache:', err);
+      return cache.data;
+    }
+    throw err;
+  }
 
   // Indices 1-3 are the 3 forecast days (index 0 = today)
   const forecast: ForecastDay[] = json.daily.time.slice(1, 4).map((isoDate, i) => ({
